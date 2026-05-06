@@ -198,3 +198,7 @@ npm run dev
   - Encode: video süresi × preset-bağlı katsayı (8x–30x), min 60 sn
 - Geçici dosyalar `%LOCALAPPDATA%\SilenceCut\temp\` altında — `_MEIPASS` (read-only PyInstaller) içinde değil
 - CORS yalnızca `localhost:5173` (dev modu) için açık
+
+---
+
+## Uygulamanın ilk aşamasında uzun videolarda videoyu dışarıya aktarırken çok uzun süreler bekleme süresi mevcut. Şimdilik geliştirmede odaklanacağım kısım bu sorunu çözmek olacak.
