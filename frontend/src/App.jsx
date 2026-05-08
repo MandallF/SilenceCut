@@ -246,14 +246,23 @@ export default function App() {
           pushToast('Sunucu yanıtı çözümlenemedi', 'danger');
         }
       } else {
-        pushToast('Mikrofon yükleme başarısız', 'danger');
+        let detail = 'Mikrofon yükleme başarısız';
+        try {
+          const err = JSON.parse(xhr.responseText);
+          if (err.detail) detail = err.detail;
+        } catch { /* ignore */ }
+        if (xhr.status === 507) {
+          pushToast(`💾 Disk dolu — ${detail}`, 'danger', 8000);
+        } else {
+          pushToast(detail, 'danger', 6000);
+        }
       }
     };
     xhr.onerror = () => {
       setMicUploading(false);
       setMicUploadFinalizing(false);
       setMicUploadProgress(0);
-      pushToast('Backend\'e bağlanılamadı', 'danger');
+      pushToast('Sunucuyla bağlantı kesildi', 'danger', 6000);
     };
     xhr.onabort = () => {
       setMicUploading(false);

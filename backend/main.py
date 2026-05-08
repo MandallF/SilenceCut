@@ -183,8 +183,12 @@ def _find_mic(file_id: str) -> Path | None:
         return None
     prefix = f"{file_id}{MIC_TAG}"
     for entry in TEMP_DIR.iterdir():
-        if entry.is_file() and entry.name.startswith(prefix):
-            return entry
+        if not entry.is_file() or not entry.name.startswith(prefix):
+            continue
+        # Skip in-progress upload staging files — they're not a real mic yet.
+        if entry.name.endswith(".staging"):
+            continue
+        return entry
     return None
 
 
@@ -315,8 +319,13 @@ async def upload_mic_raw(
     _find_video(x_file_id)  # also validates file_id format
     safe_name = _safe_filename(x_filename)
     final = TEMP_DIR / f"{x_file_id}{MIC_TAG}{safe_name}"
-    # Write to a staging path first so a failed/interrupted upload doesn't
-    # destroy the previous mic file. Replace atomically only on success.
+    # Capture which mic (if any) exists BEFORE we start writing — _find_mic
+    # skips .staging files so it won't see our in-progress upload, but doing
+    # the lookup first is also a clearer guarantee.
+    existing = _find_mic(x_file_id)
+
+    # Write to a staging path so a failed/interrupted upload doesn't destroy
+    # the previous mic file. Replace atomically only on success.
     staging = TEMP_DIR / f"{x_file_id}{MIC_TAG}.staging"
     try:
         size = await _stream_to_disk(request, staging)
@@ -325,10 +334,9 @@ async def upload_mic_raw(
             raise HTTPException(status_code=507, detail="Disk dolu.") from exc
         raise HTTPException(status_code=500, detail=f"Dosya yazma hatası: {exc}") from exc
 
-    # Remove any prior mic now that we have a complete new one ready, then
-    # move the staging file into place. os.replace is atomic on Windows when
-    # source and destination are on the same volume (always true here).
-    existing = _find_mic(x_file_id)
+    # New mic is fully on disk → safe to remove the old one and move staging
+    # into place. os.replace is atomic on Windows when source and destination
+    # share a volume (always true here).
     if existing is not None and existing != final:
         try:
             existing.unlink()
