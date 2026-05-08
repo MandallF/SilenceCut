@@ -53,6 +53,9 @@ export default function App() {
   const [toasts, setToasts] = useState([]);
   const [helpOpen, setHelpOpen] = useState(false);
   const [backendDown, setBackendDown] = useState(false);
+  // Hardware encoder info from /api/encoders, populated on mount.
+  const [hwEncoder, setHwEncoder] = useState(null);       // 'h264_amf' | 'h264_nvenc' | etc | null
+  const [hwEncoderLabel, setHwEncoderLabel] = useState(null);  // user-facing label
 
   const history = useHistory([]);
   const editable = history.current;
@@ -63,6 +66,22 @@ export default function App() {
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, ms);
+  }, []);
+
+  // Probe hardware encoders once on mount. The backend caches the result so
+  // subsequent requests are instant.
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/encoders').then(async (r) => {
+      if (!r.ok) return;
+      const data = await r.json();
+      if (cancelled) return;
+      if (data.hw_encoder) {
+        setHwEncoder(data.hw_encoder);
+        setHwEncoderLabel(data.hw_label);
+      }
+    }).catch(() => { /* probe is best-effort */ });
+    return () => { cancelled = true; };
   }, []);
 
   /* ----- Backend reconnect ----- */
@@ -343,22 +362,47 @@ export default function App() {
     }, 0);
     const totalSilent = keptSeconds;
     const totalKeep = Math.max(1, analysis.duration - totalSilent);
+    // Local copy we can mutate if the user opts into the GPU suggestion below
+    // — the closure-captured `quality` state won't update fast enough.
+    let effectiveQuality = quality;
+
+    // Long-video warnings — pick the most relevant one based on what's selected.
     if (quality === 'high' && totalKeep > 30 * 60) {
-      // Rough estimate: high preset encodes ~0.1-0.3x realtime on a typical
-      // desktop. Show a conservative range so users know what they're in for.
       const minH = (totalKeep / 60 / 60 / 0.3).toFixed(1);
       const maxH = (totalKeep / 60 / 60 / 0.1).toFixed(1);
+      const gpuTip = hwEncoder
+        ? `\n\n💡 GPU encode (${hwEncoderLabel}) bu sürenin ` +
+          `1/10'undan kısa sürer ve kalite farkı oyun kayıtları için ` +
+          `pratikte hissedilmez.`
+        : '';
       const ok = window.confirm(
         `⚠ Uzun video uyarısı\n\n` +
         `Yüksek Kalite preset'i bu uzunlukta bir videoda ` +
         `tahminen ${minH}–${maxH} saat sürer (CPU'nuza göre).\n\n` +
         `"Dengeli" preset'i 5-10 kat daha hızlıdır ve görsel fark ` +
-        `yok denecek kadar azdır.\n\n` +
-        `Yine de Yüksek Kalite ile devam etmek istiyor musunuz?\n\n` +
-        `[Tamam] = Yüksek Kalite ile devam et\n` +
-        `[İptal] = Vazgeç ve preset'i değiştir`
+        `yok denecek kadar azdır.${gpuTip}\n\n` +
+        `Yine de Yüksek Kalite ile devam etmek istiyor musunuz?`
       );
       if (!ok) return;
+    } else if (
+      (quality === 'balanced' || quality === 'fast') &&
+      hwEncoder &&
+      totalKeep > 60 * 60
+    ) {
+      // Software encode of a 1+ hour kept-content video on CPU is hours of
+      // work. Let the user know one click can cut it down dramatically.
+      const ok = window.confirm(
+        `💡 GPU encode önerisi\n\n` +
+        `1 saatten uzun bu videoyu CPU ile işlemek saatler alabilir. ` +
+        `Bilgisayarınızda ${hwEncoderLabel} mevcut — onu kullanırsanız ` +
+        `tahminen 5-30× daha hızlı biter.\n\n` +
+        `[Tamam] = ${hwEncoderLabel} ile devam et\n` +
+        `[İptal] = Mevcut CPU preset'i ile devam et`
+      );
+      if (ok) {
+        effectiveQuality = 'gpu';
+        setQuality('gpu');  // also update the dropdown so the user sees it
+      }
     }
 
     const stem = file.filename.replace(/\.[^.]+$/, '');
@@ -420,7 +464,7 @@ export default function App() {
           mic_offset: mic ? micOffset : 0.0,
           video_gain_db: 0.0,
           mic_gain_db: 0.0,
-          quality,
+          quality: effectiveQuality,
           // Explicitly tell the backend whether to mix the mic. Otherwise it
           // would mix any mic file still on disk even if the user removed it.
           use_mic: !!mic,
@@ -668,6 +712,7 @@ export default function App() {
               exportPhase={exportPhase}
               quality={quality}
               setQuality={setQuality}
+              hwEncoderLabel={hwEncoderLabel}
             />
           ) : (
             <div style={{ padding: 24, color: '#484f58', textAlign: 'center', fontSize: 12 }}>

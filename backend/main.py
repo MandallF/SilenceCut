@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from analyzer import analyze_audio, suggest_thresholds
-from exporter import export_video, ffmpeg_available
+from exporter import detect_hw_encoder, export_video, ffmpeg_available
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -252,6 +252,24 @@ def _safe_filename(name: str) -> str:
 def health():
     """Lightweight liveness probe used by the frontend reconnect button."""
     return {"status": "ok"}
+
+
+@api.get("/encoders")
+def encoders():
+    """Tell the frontend which encoders are available so it can show or hide
+    the GPU option in the quality dropdown. Probes hardware on first call
+    (cached afterwards) — may take a couple of seconds the first time.
+    """
+    hw = detect_hw_encoder()
+    label_map = {
+        "h264_nvenc": "GPU (NVIDIA NVENC)",
+        "h264_qsv":   "GPU (Intel Quick Sync)",
+        "h264_amf":   "GPU (AMD AMF)",
+    }
+    return {
+        "hw_encoder": hw,
+        "hw_label": label_map.get(hw or "", None),
+    }
 
 
 @api.post("/upload-raw")

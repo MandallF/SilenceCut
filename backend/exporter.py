@@ -61,7 +61,98 @@ QUALITY_PRESETS = {
     "fast":     ("ultrafast", 23),
     "balanced": ("fast",      20),
     "high":     ("slow",      18),
+    # "gpu" is special-cased — codec args are picked at runtime based on the
+    # detected hardware encoder (AMF / NVENC / QSV). The tuple values are
+    # placeholders so QUALITY_PRESETS.get(...) still returns something.
+    "gpu":      ("hw",        20),
 }
+
+
+# Cache the result of hardware-encoder probing — first call may take a couple
+# of seconds because we actually try to encode a test pattern. Subsequent
+# calls return instantly. Sentinel -1 means "not yet probed".
+_HW_ENCODER_CACHE: str | None = -1  # type: ignore[assignment]
+
+
+def _probe_hw_encoder(encoder: str) -> bool:
+    """Try a 1-frame test encode to see if *encoder* actually works on this box.
+
+    Just being listed in `-encoders` is not enough — NVENC requires a working
+    NVIDIA driver, AMF requires an AMD GPU + driver, QSV requires Intel iGPU.
+    A real probe is the only reliable check.
+    """
+    try:
+        result = subprocess.run(
+            [
+                get_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
+                "-f", "lavfi", "-i", "color=c=black:s=128x128:r=30",
+                "-t", "0.1",
+                "-c:v", encoder,
+                "-f", "null", "-",
+            ],
+            capture_output=True,
+            timeout=8,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def detect_hw_encoder() -> str | None:
+    """Return the best available hardware H.264 encoder name, or None."""
+    global _HW_ENCODER_CACHE
+    if _HW_ENCODER_CACHE != -1:
+        return _HW_ENCODER_CACHE  # type: ignore[return-value]
+    # Order: NVENC (best quality/perf trade-off on consumer cards) → QSV
+    # (Intel iGPUs, very common) → AMF (AMD discrete + APUs).
+    for enc in ("h264_nvenc", "h264_qsv", "h264_amf"):
+        if _probe_hw_encoder(enc):
+            _HW_ENCODER_CACHE = enc
+            return enc
+    _HW_ENCODER_CACHE = None
+    return None
+
+
+def _codec_args_for(quality: str) -> list[str]:
+    """Build the FFmpeg codec arguments for the given quality preset.
+
+    For software presets returns libx264 with the matching x264 preset/crf.
+    For "gpu" picks whichever hardware encoder probes successfully on this
+    machine; falls back to libx264 fast/crf 20 if no hardware works.
+    """
+    if quality == "gpu":
+        enc = detect_hw_encoder()
+        if enc == "h264_nvenc":
+            # p4 = balanced preset (1 = slowest/best, 7 = fastest/worst).
+            return [
+                "-c:v", "h264_nvenc",
+                "-preset", "p4",
+                "-tune", "hq",
+                "-rc", "vbr",
+                "-cq", "20",
+                "-b:v", "0",
+            ]
+        if enc == "h264_qsv":
+            return [
+                "-c:v", "h264_qsv",
+                "-preset", "medium",
+                "-global_quality", "20",
+            ]
+        if enc == "h264_amf":
+            # CQP rate-control with QP ~20 → roughly comparable to libx264 crf 20.
+            return [
+                "-c:v", "h264_amf",
+                "-quality", "balanced",
+                "-rc", "cqp",
+                "-qp_i", "20",
+                "-qp_p", "22",
+                "-qp_b", "24",
+            ]
+        # No hardware available — silently fall back to fast software.
+        return ["-c:v", "libx264", "-preset", "fast", "-crf", "20"]
+
+    preset, crf = QUALITY_PRESETS.get(quality, QUALITY_PRESETS["balanced"])
+    return ["-c:v", "libx264", "-preset", preset, "-crf", str(crf)]
 
 
 def _encode_timeout(duration_sec: float, preset: str) -> float:
@@ -126,9 +217,16 @@ def export_video(
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
-    preset, crf = QUALITY_PRESETS.get(quality, QUALITY_PRESETS["balanced"])
+    codec_args = _codec_args_for(quality)
+    # Pick a timeout factor: hardware encodes are typically much faster than
+    # the slowest software preset, so we use the same 8x floor.
+    preset_for_timeout = quality if quality != "gpu" else "ultrafast"
+    if preset_for_timeout in QUALITY_PRESETS:
+        x264_preset = QUALITY_PRESETS[preset_for_timeout][0]
+    else:
+        x264_preset = "fast"
     kept_duration = sum(e - s for s, e in keep)
-    timeout = _encode_timeout(max(kept_duration, duration), preset)
+    timeout = _encode_timeout(max(kept_duration, duration), x264_preset)
 
     if mic_path:
         return _export_with_mic(
@@ -139,14 +237,13 @@ def export_video(
             mic_offset,
             video_audio_gain_db,
             mic_gain_db,
-            preset=preset,
-            crf=crf,
+            codec_args=codec_args,
             timeout=timeout,
             progress_cb=progress_cb,
         )
     return _export_video_only(
         input_path, output_path, keep,
-        preset=preset, crf=crf, timeout=timeout, progress_cb=progress_cb,
+        codec_args=codec_args, timeout=timeout, progress_cb=progress_cb,
     )
 
 
@@ -247,11 +344,12 @@ def _export_video_only(
     input_path: str,
     output_path: str,
     keep: list[tuple[float, float]],
-    preset: str = "fast",
-    crf: int = 20,
+    codec_args: list[str] | None = None,
     timeout: float = 1800.0,
     progress_cb: ProgressCallback | None = None,
 ) -> str:
+    if codec_args is None:
+        codec_args = ["-c:v", "libx264", "-preset", "fast", "-crf", "20"]
     filter_parts: list[str] = []
     concat_inputs_v: list[str] = []
     concat_inputs_a: list[str] = []
@@ -274,16 +372,11 @@ def _export_video_only(
     filter_complex = ";".join(filter_parts + [concat])
 
     base_cmd = [get_ffmpeg(), "-y", "-i", input_path]
-    tail_cmd = [
-        "-map", "[outv]",
-        "-map", "[outa]",
-        "-c:v", "libx264",
-        "-preset", preset,
-        "-crf", str(crf),
-        "-c:a", "aac",
-        "-b:a", "192k",
-        output_path,
-    ]
+    tail_cmd = (
+        ["-map", "[outv]", "-map", "[outa]"]
+        + codec_args
+        + ["-c:a", "aac", "-b:a", "192k", output_path]
+    )
     _run_ffmpeg_with_filter(base_cmd, filter_complex, tail_cmd, timeout, progress_cb=progress_cb)
     return output_path
 
@@ -296,11 +389,12 @@ def _export_with_mic(
     mic_offset: float,
     video_gain_db: float,
     mic_gain_db: float,
-    preset: str = "fast",
-    crf: int = 20,
+    codec_args: list[str] | None = None,
     timeout: float = 1800.0,
     progress_cb: ProgressCallback | None = None,
 ) -> str:
+    if codec_args is None:
+        codec_args = ["-c:v", "libx264", "-preset", "fast", "-crf", "20"]
     """Mix the original video audio with a separate mic track, then cut.
 
     The mic stream is delayed (or trimmed) to align with the video timeline
@@ -355,15 +449,10 @@ def _export_with_mic(
     filter_complex = ";".join(filter_parts + [concat])
 
     base_cmd = [get_ffmpeg(), "-y", "-i", video_path, "-i", mic_path]
-    tail_cmd = [
-        "-map", "[outv]",
-        "-map", "[outa]",
-        "-c:v", "libx264",
-        "-preset", preset,
-        "-crf", str(crf),
-        "-c:a", "aac",
-        "-b:a", "192k",
-        output_path,
-    ]
+    tail_cmd = (
+        ["-map", "[outv]", "-map", "[outa]"]
+        + codec_args
+        + ["-c:a", "aac", "-b:a", "192k", output_path]
+    )
     _run_ffmpeg_with_filter(base_cmd, filter_complex, tail_cmd, timeout, progress_cb=progress_cb)
     return output_path

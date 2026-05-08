@@ -1,9 +1,9 @@
 import { fmt } from '../utils/format.js';
 
-const QUALITY_OPTIONS = [
-  { value: 'fast',     label: 'Hızlı',         hint: 'En hızlı encode · büyük dosya · iyi kalite' },
-  { value: 'balanced', label: 'Dengeli',       hint: 'Orta hız · orta dosya · yüksek kalite (önerilen)' },
-  { value: 'high',     label: 'Yüksek Kalite', hint: 'Yavaş encode · küçük dosya · görsel-olarak-kayıpsız' },
+const SOFTWARE_qualityOptions = [
+  { value: 'fast',     label: 'Hızlı',         hint: 'CPU · en hızlı yazılım encode · büyük dosya · iyi kalite' },
+  { value: 'balanced', label: 'Dengeli',       hint: 'CPU · orta hız · yüksek kalite (önerilen)' },
+  { value: 'high',     label: 'Yüksek Kalite', hint: 'CPU · yavaş · küçük dosya · görsel-olarak-kayıpsız' },
 ];
 
 export default function ConfirmPanel({
@@ -22,6 +22,7 @@ export default function ConfirmPanel({
   exportPhase,
   quality,
   setQuality,
+  hwEncoderLabel,  // e.g. "GPU (AMD AMF)" or null
 }) {
   // Format an ETA in seconds as a human-friendly string ("3:45", "1s 12dk").
   const fmtEta = (s) => {
@@ -32,6 +33,14 @@ export default function ConfirmPanel({
     const m = Math.round((s % 3600) / 60);
     return `${h} sa ${m} dk`;
   };
+  // Build the quality dropdown — prepend a GPU option if the backend
+  // detected a working hardware encoder.
+  const qualityOptions = hwEncoderLabel
+    ? [
+        { value: 'gpu', label: hwEncoderLabel, hint: '⚡ GPU encode · 5-30× hızlı · iyi kalite (uzun video için önerilen)' },
+        ...SOFTWARE_qualityOptions,
+      ]
+    : SOFTWARE_qualityOptions;
   const totalRemoved = regions.reduce((sum, r) => sum + (r.end - r.start), 0);
   const pct = duration > 0 ? (totalRemoved / duration) * 100 : 0;
 
@@ -122,12 +131,12 @@ export default function ConfirmPanel({
               borderRadius: 4, fontSize: 12,
             }}
           >
-            {QUALITY_OPTIONS.map((opt) => (
+            {qualityOptions.map((opt) => (
               <option key={opt.value} value={opt.value}>{opt.label}</option>
             ))}
           </select>
           <div style={{ fontSize: 10, color: '#484f58', lineHeight: 1.4 }}>
-            {QUALITY_OPTIONS.find((o) => o.value === quality)?.hint}
+            {qualityOptions.find((o) => o.value === quality)?.hint}
           </div>
         </div>
         <button
