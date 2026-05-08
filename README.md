@@ -202,3 +202,4 @@ npm run dev
 ---
 
 ## Uygulamanın ilk aşamasında uzun videolarda videoyu dışarıya aktarırken çok uzun süreler bekleme süresi mevcut. Şimdilik geliştirmede odaklanacağım kısım bu sorunu çözmek olacak.
+-Düzeltme: Artık dışa aktarırken ekran kartını da kullanarak hızı arttırdım.
