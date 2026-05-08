@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
 
@@ -12,6 +13,10 @@ WINDOW_MS = 50
 PADDING_MS = 50
 WAVEFORM_POINTS = 1200
 SAMPLE_RATE = 22050
+
+# Match exporter.py — keep the brief console window from flashing when we
+# spawn ffmpeg.exe for audio decode.
+_NO_WINDOW_FLAG = 0x08000000 if os.name == "nt" else 0  # CREATE_NO_WINDOW
 
 
 @dataclass
@@ -38,7 +43,13 @@ def _decode_audio(path: str, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
     # multi-hour videos at 22 kHz mono. If ffmpeg is stuck longer than this it
     # means something is seriously wrong (e.g. corrupt input).
     try:
-        proc = subprocess.run(cmd, capture_output=True, check=False, timeout=1800)
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            check=False,
+            timeout=1800,
+            creationflags=_NO_WINDOW_FLAG,
+        )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError("FFmpeg decode timed out after 30 minutes") from exc
     if proc.returncode != 0:

@@ -50,6 +50,7 @@ if sys.stdout is None or sys.stderr is None:
 
 
 CREATE_NEW_PROCESS_GROUP = 0x00000200
+CREATE_NO_WINDOW = 0x08000000  # suppress any inherited console window
 
 # Wait timeouts (seconds).
 SERVER_START_TIMEOUT = 20.0
@@ -142,7 +143,7 @@ def _launch_window(browser_path: str, url: str, profile_dir: Path) -> None:
         "--hide-crash-restore-bubble",
         "--disable-restore-session-state",
     ]
-    flags = CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+    flags = (CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW) if os.name == "nt" else 0
     subprocess.Popen(
         args,
         creationflags=flags,

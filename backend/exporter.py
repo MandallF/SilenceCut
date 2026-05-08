@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 import threading
@@ -13,6 +14,12 @@ from ffmpeg_path import get_ffmpeg
 # Progress callback receives a dict of FFmpeg's -progress key=value pairs.
 # Common keys: frame, fps, out_time_us, total_size, speed, progress (continue|end).
 ProgressCallback = Callable[[dict], None]
+
+
+# Suppress the brief black console window that Windows pops up every time we
+# spawn ffmpeg.exe (a console app) from our no-console GUI launcher. Has no
+# effect on non-Windows platforms.
+_NO_WINDOW_FLAG = 0x08000000 if os.name == "nt" else 0  # CREATE_NO_WINDOW
 
 
 # Windows' CreateProcess limits the full command line to ~32 KiB. A long video
@@ -92,6 +99,7 @@ def _probe_hw_encoder(encoder: str) -> bool:
             ],
             capture_output=True,
             timeout=8,
+            creationflags=_NO_WINDOW_FLAG,
         )
         return result.returncode == 0
     except Exception:
@@ -178,6 +186,7 @@ def ffmpeg_available() -> bool:
             check=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            creationflags=_NO_WINDOW_FLAG,
         )
         return True
     except Exception:
@@ -256,7 +265,13 @@ def _run_ffmpeg(cmd: list[str], timeout: float, progress_cb: ProgressCallback | 
     """
     if progress_cb is None:
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                creationflags=_NO_WINDOW_FLAG,
+            )
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(f"FFmpeg encode timed out after {int(timeout)} s") from exc
         if proc.returncode != 0:
@@ -273,6 +288,7 @@ def _run_ffmpeg(cmd: list[str], timeout: float, progress_cb: ProgressCallback | 
         stderr=subprocess.PIPE,
         text=True,
         bufsize=1,
+        creationflags=_NO_WINDOW_FLAG,
     )
     stderr_tail: list[str] = []
 
