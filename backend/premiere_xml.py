@@ -94,11 +94,16 @@ def _invert_silent_to_keep(silent: list[dict], duration: float) -> list[tuple[fl
 def _path_to_url(path: str) -> str:
     """Windows path → file:// URL Premiere can resolve.
 
-    Path.as_uri() emits 'file:///D:/foo' which Premiere accepts; we keep that
-    form rather than the older 'file://localhost/D:/foo' to match what
-    modern Adobe applications themselves write.
+    Path.as_uri() returns 'file:///D:/foo/bar.mp4'. Premiere Pro on Windows
+    mis-parses the empty-host form: it treats the leading triple slash as a
+    UNC path (\\D:\\foo\\bar.mp4) and reports the file as offline. Adobe's
+    own apps write the explicit 'file://localhost/...' form, which Premiere
+    parses correctly as a local path. So we rewrite to that form.
     """
-    return Path(path).resolve().as_uri()
+    uri = Path(path).resolve().as_uri()
+    if uri.startswith("file:///"):
+        uri = "file://localhost/" + uri[len("file:///"):]
+    return uri
 
 
 def _rate_xml(parent: ET.Element, fps: float) -> None:
