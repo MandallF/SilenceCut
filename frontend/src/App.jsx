@@ -202,11 +202,30 @@ export default function App() {
 
   const applySuggestion = useCallback(() => {
     if (!suggestion) return;
-    if (suggestion.video?.threshold) setThreshold(suggestion.video.threshold);
-    if (suggestion.mic?.threshold) setMicThreshold(suggestion.mic.threshold);
+    // Build a "what changed" summary so the user can see the new values for
+    // BOTH channels (a previous version only flashed a generic toast and the
+    // video threshold change was easy to miss when the new value happened
+    // to land near the existing slider position).
+    const parts = [];
+    if (suggestion.video?.threshold) {
+      const oldV = Math.round(threshold * 1000);
+      const newV = Math.round(suggestion.video.threshold * 1000);
+      setThreshold(suggestion.video.threshold);
+      parts.push(`Video: ${oldV} → ${newV}`);
+    }
+    if (suggestion.mic?.threshold) {
+      const oldM = Math.round(micThreshold * 1000);
+      const newM = Math.round(suggestion.mic.threshold * 1000);
+      setMicThreshold(suggestion.mic.threshold);
+      parts.push(`Mikrofon: ${oldM} → ${newM}`);
+    }
     setSuggestion(null);
-    pushToast('Önerilen eşikler uygulandı', 'success', 1800);
-  }, [suggestion, pushToast]);
+    pushToast(
+      parts.length > 0 ? `Eşikler uygulandı — ${parts.join(' · ')}` : 'Önerilen eşikler uygulandı',
+      'success',
+      4000,
+    );
+  }, [suggestion, threshold, micThreshold, pushToast]);
 
   /* ----- Mic upload / remove ----- */
   const handleUploadMic = useCallback((rawFile) => {
