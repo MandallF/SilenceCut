@@ -319,6 +319,61 @@ async def upload_raw(
     return {"file_id": file_id, "filename": safe_name, "size": size}
 
 
+# Map FFmpeg codec names → file extension that downstream tools (notably
+# Premiere Pro) recognize. Some recording apps (OBS, Discord, mobile)
+# happily save AAC inside an MP4 container under a ".mp3" filename.
+# Premiere then runs an MP3 parser on the file, gets confused, and treats
+# the audio as silent. Re-stamping the extension based on the actual
+# codec sidesteps the whole class of mismatch.
+_CODEC_EXTENSION_MAP = {
+    "aac":      ".m4a",
+    "mp3":      ".mp3",
+    "vorbis":   ".ogg",
+    "opus":     ".opus",
+    "flac":     ".flac",
+    "pcm_s16le": ".wav",
+    "pcm_s24le": ".wav",
+    "pcm_s32le": ".wav",
+    "pcm_f32le": ".wav",
+    "pcm_alaw":  ".wav",
+    "pcm_mulaw": ".wav",
+}
+
+
+def _correct_audio_extension(path: Path) -> Path:
+    """Probe *path*'s actual audio codec and rename to a matching extension.
+
+    Returns the (possibly new) path. Best-effort — if the probe fails or no
+    rule matches the codec, leaves the file alone.
+    """
+    from exporter import _NO_WINDOW_FLAG
+    from ffmpeg_path import get_ffmpeg
+    try:
+        result = subprocess.run(
+            [get_ffmpeg(), "-i", str(path), "-hide_banner"],
+            capture_output=True, text=True, timeout=10,
+            creationflags=_NO_WINDOW_FLAG,
+        )
+        out = result.stderr or ""
+    except Exception:
+        return path
+    m = re.search(r"Audio:\s*([a-z0-9_]+)", out)
+    if not m:
+        return path
+    codec = m.group(1).lower()
+    correct_ext = _CODEC_EXTENSION_MAP.get(codec)
+    if not correct_ext or path.suffix.lower() == correct_ext:
+        return path
+    new_path = path.with_suffix(correct_ext)
+    if new_path.exists():
+        return path  # don't clobber a different file at the target name
+    try:
+        path.rename(new_path)
+        return new_path
+    except OSError:
+        return path
+
+
 @api.post("/upload-mic-raw")
 async def upload_mic_raw(
     request: Request,
@@ -360,7 +415,12 @@ async def upload_mic_raw(
         except OSError:
             pass
         raise HTTPException(status_code=500, detail=f"Dosya taşıma hatası: {exc}") from exc
-    return {"file_id": x_file_id, "filename": safe_name, "size": size, "kind": "mic"}
+
+    # If the user uploaded e.g. an AAC-in-MP4 stream named ".mp3", Premiere
+    # would silently fail to decode it on XML import. Probe the real codec
+    # and re-stamp the extension to match.
+    final = _correct_audio_extension(final)
+    return {"file_id": x_file_id, "filename": final.name.split(MIC_TAG, 1)[-1], "size": size, "kind": "mic"}
 
 
 @api.delete("/upload-mic/{file_id}")
