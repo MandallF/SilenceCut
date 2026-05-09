@@ -203,3 +203,4 @@ npm run dev
 
 ## Uygulamanın ilk aşamasında uzun videolarda videoyu dışarıya aktarırken çok uzun süreler bekleme süresi mevcut. Şimdilik geliştirmede odaklanacağım kısım bu sorunu çözmek olacak.
 -Düzeltme: Artık dışa aktarırken ekran kartını da kullanarak hızı arttırdım.
+-Düzeltme: Ekstra dışa aktarma seçeneği ekledim. XML formatında projeyi dışa aktarıyoruz ve bu sayede çeşitli video edit programlarında bu dosyayı açtığımızda otomatik sekans açıyor. Böylelikle oriinal videonun üzerinde sanki tüm bu değişiklikler yapılmış gibi hem düzenleme yapabiliyoruz hem de çok daha kısa sürede dışa aktarım yapabiliyoruz.
