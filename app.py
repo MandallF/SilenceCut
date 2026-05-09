@@ -130,6 +130,23 @@ def _find_browser() -> tuple[str, str] | None:
 
 
 def _launch_window(browser_path: str, url: str, profile_dir: Path) -> None:
+    # Edge picks up the OS-level Microsoft account on first launch and shows
+    # the "kubilayinanc4@gmail.com bu cihazda oturum açtı" sync promo even
+    # in --app mode with a fresh --user-data-dir. We don't want any of that
+    # — this is a desktop app, not a browser. Everything in the
+    # --disable-features list below has, at one Edge build or another,
+    # been the trigger for that promo or a related sign-in prompt.
+    disabled_features = ",".join([
+        "Translate",
+        "InfiniteSessionRestore",
+        "msSignInPromo",
+        "MSEdgeFreSignedInPromo",
+        "MSEdgeFREProfileSignIn",
+        "IdentityConsistency",
+        "MicrosoftRewards",
+        "OnboardingFRESignIn",
+        "MSEdgePopulationCommunityHubSignIn",
+    ])
     args = [
         browser_path,
         f"--app={url}",
@@ -137,11 +154,15 @@ def _launch_window(browser_path: str, url: str, profile_dir: Path) -> None:
         "--window-size=1280,820",
         "--no-first-run",
         "--no-default-browser-check",
+        f"--disable-features={disabled_features}",
         # Prevent session-restore / crash-recovery dialogs that block the app UI.
-        "--disable-features=Translate,InfiniteSessionRestore",
         "--disable-session-crashed-bubble",
         "--hide-crash-restore-bubble",
         "--disable-restore-session-state",
+        # Hard-disable Chromium sync; without this, even a fresh profile
+        # tries to fetch a sign-in token from the OS account manager.
+        "--disable-sync",
+        "--disable-signin-promo",
     ]
     flags = (CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW) if os.name == "nt" else 0
     subprocess.Popen(
