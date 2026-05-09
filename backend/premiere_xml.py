@@ -57,19 +57,34 @@ def _probe_media(path: str) -> dict:
         h, mn, s = int(m.group(1)), int(m.group(2)), float(m.group(3))
         info["duration"] = h * 3600 + mn * 60 + s
 
-    # Video stream — match the first one only.
-    vm = re.search(r"Video:.*?(\d{2,5})x(\d{2,5}).*?(\d+(?:\.\d+)?)\s*fps", out)
-    if vm:
-        info["width"] = int(vm.group(1))
-        info["height"] = int(vm.group(2))
-        info["fps"] = float(vm.group(3))
+    # Video stream — match the first one only. Resolution and rate can show
+    # up in either order in FFmpeg's stderr depending on the codec, so we
+    # query them with two separate searches scoped to the Video: line.
+    vline_match = re.search(r"Video:[^\n]*", out)
+    if vline_match:
+        vline = vline_match.group(0)
+        rm = re.search(r"(\d{2,5})x(\d{2,5})", vline)
+        if rm:
+            info["width"] = int(rm.group(1))
+            info["height"] = int(rm.group(2))
+        # Try fps first, then tbr as a fallback (many sources only carry tbr).
+        fps_m = re.search(r"(\d+(?:\.\d+)?)\s*fps", vline)
+        if not fps_m:
+            fps_m = re.search(r"(\d+(?:\.\d+)?)\s*tbr", vline)
+        if fps_m:
+            info["fps"] = float(fps_m.group(1))
 
     # Audio stream — sample rate + channel layout.
     am = re.search(r"Audio:.*?(\d+)\s*Hz,\s*([a-z0-9.()\s]+?),", out)
     if am:
         info["sample_rate"] = int(am.group(1))
         layout = am.group(2).strip().lower()
-        info["channels"] = 1 if "mono" in layout else 2
+        if "mono" in layout:
+            info["channels"] = 1
+        elif "5.1" in layout or "7.1" in layout:
+            info["channels"] = 6 if "5.1" in layout else 8
+        else:
+            info["channels"] = 2
 
     return info
 
@@ -196,7 +211,15 @@ def generate_premiere_xml(
         raise ValueError("No segments to keep — entire timeline would be empty")
 
     video_info = _probe_media(video_path)
-    fps = video_info["fps"] or 30.0
+    if not video_info["fps"] or video_info["fps"] <= 0:
+        # Falling back to 30 here would silently desync the timeline by 20%
+        # on a 24 fps source. Better to fail loudly so the user knows the
+        # source is unusual and can re-encode if needed.
+        raise ValueError(
+            "Video'nun frame rate'i tespit edilemedi. "
+            "Kaynak dosya bozuk olabilir veya nadir bir codec kullanıyor olabilir."
+        )
+    fps = video_info["fps"]
     width = video_info["width"] or 1920
     height = video_info["height"] or 1080
     sample_rate = video_info["sample_rate"] or 48000

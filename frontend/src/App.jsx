@@ -129,6 +129,13 @@ export default function App() {
       if (prev) URL.revokeObjectURL(prev);
       return url;
     });
+    // If the user is replacing an already-uploaded video, clean up the
+    // previous file_id's temp files so we don't leak GBs of disk space
+    // across a long editing session.
+    if (file?.file_id) {
+      fetch(`/api/cleanup/${file.file_id}`, { method: 'DELETE' }).catch(() => { /* best-effort */ });
+    }
+    setFile(null);
     setAnalysis(null);
     history.reset([]);
     setSelectedId(null);
@@ -198,7 +205,7 @@ export default function App() {
     setUploadFinalizing(false);
     setUploadProgress(0);
     xhr.send(rawFile);
-  }, [history, pushToast, requestSuggestion]);
+  }, [file, history, pushToast, requestSuggestion]);
 
   const applySuggestion = useCallback(() => {
     if (!suggestion) return;
@@ -281,6 +288,10 @@ export default function App() {
       setMicUploading(false);
       setMicUploadFinalizing(false);
       setMicUploadProgress(0);
+      // Match the video upload's behaviour so the "Yeniden Bağlan" banner
+      // surfaces here too — otherwise the user gets a fleeting toast and
+      // no obvious recovery path.
+      setBackendDown(true);
       pushToast('Sunucuyla bağlantı kesildi', 'danger', 6000);
     };
     xhr.onabort = () => {
@@ -635,7 +646,7 @@ export default function App() {
       setExportSpeed(0);
       setExportPhase('idle');
     }
-  }, [file, analysis, editable, mic, micOffset, quality, pushToast]);
+  }, [file, analysis, editable, mic, micOffset, quality, pushToast, hwEncoder, hwEncoderLabel, setQuality]);
 
   /* ----- Audio meter ----- */
   const audio = useAudioMeter(videoRef, !!videoUrl);

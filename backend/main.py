@@ -471,7 +471,13 @@ def export(req: ExportRequest):
     # Honour the frontend's explicit choice: ignore the mic file if the user
     # toggled it off in the UI even though the file still exists on disk.
     mic = _find_mic(req.file_id) if req.use_mic else None
-    out_path = TEMP_DIR / f"{req.file_id}{OUTPUT_SUFFIX}"
+    # Per-request output path. The FileResponse stream continues after the
+    # function returns and the in-memory lock is released, so a second export
+    # for the same file_id (rare but possible — refresh, retry) would
+    # otherwise overwrite the file that's still being streamed. Adding a
+    # short uuid suffix prevents that. The cleanup endpoint matches the
+    # {file_id}__ prefix and removes all of these in one go later.
+    out_path = TEMP_DIR / f"{req.file_id}__output_{uuid.uuid4().hex[:8]}.mp4"
 
     # Compute the kept duration so we can convert FFmpeg's out_time into a
     # percentage. Mirrors what the exporter will compute internally.
@@ -604,8 +610,7 @@ def export_premiere_xml(req: PremiereXmlRequest):
 
 @api.delete("/cleanup/{file_id}")
 def cleanup(file_id: str):
-    if not file_id or "/" in file_id or "\\" in file_id:
-        raise HTTPException(status_code=400, detail="invalid file_id")
+    _validate_file_id(file_id)
     # The double-underscore separator prevents matching unrelated files whose
     # name happens to start with the same hex prefix as our file_id.
     prefix = f"{file_id}{FILE_ID_SEP}"
