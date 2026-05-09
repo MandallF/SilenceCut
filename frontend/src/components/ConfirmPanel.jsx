@@ -14,6 +14,7 @@ export default function ConfirmPanel({
   onKeep,
   onEdit,
   onExport,
+  onExportPremiere,
   onReset,
   exporting,
   exportProgress,
@@ -166,6 +167,26 @@ export default function ConfirmPanel({
               </div>
             )}
           </>
+        )}
+        {onExportPremiere && (
+          <button
+            onClick={onExportPremiere}
+            disabled={exporting || regions.length === 0}
+            title="Premiere Pro'da açabileceğiniz bir XML proje dosyası üretir. Encode etmez — Premiere'de export edersiniz."
+            style={{
+              background: 'transparent',
+              color: '#a78bfa',
+              border: '1px solid #5b21b6',
+              borderRadius: 4,
+              padding: '8px 12px',
+              fontSize: 12,
+              fontWeight: 500,
+              cursor: exporting || regions.length === 0 ? 'not-allowed' : 'pointer',
+              opacity: exporting || regions.length === 0 ? 0.5 : 1,
+            }}
+          >
+            🎬 Premiere Projesi Olarak Kaydet (.xml)
+          </button>
         )}
         <button className="btn btn-secondary" onClick={onReset} disabled={exporting}>
           ↩ Orijinale Sıfırla

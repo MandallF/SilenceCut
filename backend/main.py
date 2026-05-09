@@ -14,12 +14,13 @@ from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from analyzer import analyze_audio, suggest_thresholds
 from exporter import detect_hw_encoder, export_video, ffmpeg_available
+from premiere_xml import generate_premiere_xml
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -160,6 +161,14 @@ class ExportRequest(BaseModel):
     # True for backwards compatibility, but a False here means "ignore the
     # mic file even if it's still on disk" — needed when the user removed
     # the mic in the UI but the file lingers until the next cleanup.
+    use_mic: bool = True
+
+
+class PremiereXmlRequest(BaseModel):
+    file_id: str
+    regions: list[Region]
+    duration: float = Field(..., gt=0)
+    mic_offset: float = Field(0.0, ge=-3600, le=3600)
     use_mic: bool = True
 
 
@@ -550,6 +559,46 @@ def export(req: ExportRequest):
         path=str(out_path),
         media_type="video/mp4",
         filename=download_name,
+    )
+
+
+@api.post("/export-premiere-xml")
+def export_premiere_xml(req: PremiereXmlRequest):
+    """Generate a Final Cut Pro 7 XML referencing the source files in TEMP_DIR.
+
+    Returns the XML as a download. No re-encoding happens — the file just
+    describes a Premiere timeline with the silent regions cut out. The user
+    opens it in Premiere via File → Import.
+    """
+    video = _find_video(req.file_id)
+    mic = _find_mic(req.file_id) if req.use_mic else None
+
+    silent = [r.model_dump() for r in req.regions]
+    try:
+        xml_text = generate_premiere_xml(
+            video_path=str(video),
+            silent_regions=silent,
+            duration=req.duration,
+            mic_path=str(mic) if mic else None,
+            mic_offset=req.mic_offset,
+            sequence_name=f"SilenceCut — {Path(video.name.split(VIDEO_TAG, 1)[-1]).stem}",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"XML üretimi başarısız: {exc}") from exc
+
+    stem = video.name.split(VIDEO_TAG, 1)[-1]
+    download_name = f"{Path(stem).stem}_silencecut.xml"
+    return Response(
+        content=xml_text,
+        media_type="application/xml",
+        headers={
+            "Content-Disposition": f'attachment; filename="{download_name}"',
+            # The XML references absolute paths in TEMP_DIR. If the user
+            # cleans up before opening it in Premiere they'll have to relink
+            # the media — we leave that to the human to manage.
+        },
     )
 
 

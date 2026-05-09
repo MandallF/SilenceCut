@@ -346,6 +346,77 @@ export default function App() {
     history.push(editable.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   }, [editable, history]);
 
+  /* ----- Premiere Pro XML export ----- */
+  const handleExportPremiere = useCallback(async () => {
+    if (!file || !analysis) return;
+    if (editable.length === 0) {
+      pushToast('Kesilecek bölge yok', 'warning');
+      return;
+    }
+
+    const stem = file.filename.replace(/\.[^.]+$/, '');
+    const suggestedName = `${stem}_silencecut.xml`;
+
+    // Pick where to save the XML before hitting the backend.
+    let fileHandle = null;
+    if (typeof window.showSaveFilePicker === 'function') {
+      try {
+        fileHandle = await window.showSaveFilePicker({
+          suggestedName,
+          types: [{ description: 'Premiere XML', accept: { 'application/xml': ['.xml'] } }],
+        });
+      } catch (err) {
+        if (err && err.name === 'AbortError') return;
+        fileHandle = null;
+      }
+    }
+
+    try {
+      const resp = await fetch('/api/export-premiere-xml', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          file_id: file.file_id,
+          regions: editable,
+          duration: analysis.duration,
+          mic_offset: mic ? micOffset : 0.0,
+          use_mic: !!mic,
+        }),
+      });
+      if (!resp.ok) {
+        let detail = 'XML üretimi başarısız';
+        try { const e = await resp.json(); if (e.detail) detail = e.detail; } catch { /* ignore */ }
+        pushToast(detail, 'danger', 8000);
+        return;
+      }
+      const blob = await resp.blob();
+      if (fileHandle) {
+        const writable = await fileHandle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        pushToast(`XML kaydedildi: ${fileHandle.name || suggestedName}`, 'success', 6000);
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = suggestedName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        pushToast('İndirilenler klasörüne kaydedildi', 'success', 4000);
+      }
+      pushToast(
+        '⚠ Premiere\'de import etmeden önce SilenceCut\'ı kapatmayın — XML temp klasöründeki dosyalara referans veriyor.',
+        'info', 9000,
+      );
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(err);
+      pushToast('XML indirilemedi', 'danger');
+    }
+  }, [file, analysis, editable, mic, micOffset, pushToast]);
+
   const handleReset = useCallback(() => {
     if (analysis) {
       history.reset(analysis.silent_regions);
@@ -713,6 +784,7 @@ export default function App() {
               onKeep={handleKeep}
               onEdit={handleEdit}
               onExport={handleExport}
+              onExportPremiere={handleExportPremiere}
               onReset={handleReset}
               exporting={exporting}
               exportProgress={exportProgress}

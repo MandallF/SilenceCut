@@ -18,7 +18,7 @@ if FRONTEND_DIST.is_dir():
     datas.append((str(FRONTEND_DIST), "frontend_dist"))
 
 # Backend Python modules — keep them next to the entry script.
-for fname in ("main.py", "analyzer.py", "exporter.py", "ffmpeg_path.py"):
+for fname in ("main.py", "analyzer.py", "exporter.py", "ffmpeg_path.py", "premiere_xml.py"):
     p = BACKEND / fname
     if p.exists():
         datas.append((str(p), "backend"))
