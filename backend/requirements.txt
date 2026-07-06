@@ -5,3 +5,4 @@ numpy>=1.26
 imageio-ffmpeg>=0.4.9
 psutil>=5.9
 pydantic>=2.6
+faster-whisper>=1.0

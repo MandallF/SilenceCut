@@ -45,3 +45,6 @@ Videos/
 
 # Build artefacts
 *.exe
+
+# Whisper model cache (downloaded on first subtitle generation)
+models/

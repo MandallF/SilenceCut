@@ -172,6 +172,15 @@ class PremiereXmlRequest(BaseModel):
     use_mic: bool = True
 
 
+class SrtRequest(BaseModel):
+    file_id: str
+    regions: list[Region]
+    duration: float = Field(..., gt=0)
+    mic_offset: float = Field(0.0, ge=-3600, le=3600)
+    use_mic: bool = True
+    model_size: str = "small"  # whitelisted in the endpoint
+
+
 def _validate_file_id(file_id: str) -> None:
     """Strict hex-only check. Centralises the rule that file_id is uuid4().hex."""
     if not file_id or not FILE_ID_RE.match(file_id):
@@ -515,6 +524,48 @@ def _claim_export(file_id: str):
             _EXPORT_INFLIGHT.discard(file_id)
 
 
+# Same pattern for subtitle generation — transcription takes minutes and the
+# frontend polls a separate progress store so a running export and a running
+# transcription don't stomp on each other's state.
+_SRT_PROGRESS_LOCK = threading.Lock()
+_SRT_PROGRESS: dict[str, dict] = {}
+_SRT_INFLIGHT_LOCK = threading.Lock()
+_SRT_INFLIGHT: set[str] = set()
+
+# Model sizes we allow the frontend to request. Anything bigger than
+# "medium" is unusable on CPU for long recordings.
+ALLOWED_WHISPER_SIZES = {"tiny", "base", "small", "medium"}
+
+
+def _set_srt_progress(file_id: str, data: dict | None) -> None:
+    with _SRT_PROGRESS_LOCK:
+        if data is None:
+            _SRT_PROGRESS.pop(file_id, None)
+        else:
+            _SRT_PROGRESS[file_id] = data
+
+
+def _get_srt_progress(file_id: str) -> dict | None:
+    with _SRT_PROGRESS_LOCK:
+        return _SRT_PROGRESS.get(file_id)
+
+
+@contextlib.contextmanager
+def _claim_srt(file_id: str):
+    with _SRT_INFLIGHT_LOCK:
+        if file_id in _SRT_INFLIGHT:
+            raise HTTPException(
+                status_code=409,
+                detail="Bu video için zaten bir altyazı üretimi çalışıyor.",
+            )
+        _SRT_INFLIGHT.add(file_id)
+    try:
+        yield
+    finally:
+        with _SRT_INFLIGHT_LOCK:
+            _SRT_INFLIGHT.discard(file_id)
+
+
 @api.get("/export-progress/{file_id}")
 def export_progress(file_id: str):
     """Polled by the frontend to show live encode percent + ETA."""
@@ -664,6 +715,87 @@ def export_premiere_xml(req: PremiereXmlRequest):
             # The XML references absolute paths in TEMP_DIR. If the user
             # cleans up before opening it in Premiere they'll have to relink
             # the media — we leave that to the human to manage.
+        },
+    )
+
+
+@api.get("/srt-status")
+def srt_status(model_size: str = "small"):
+    """Tell the frontend whether the Whisper model is already on disk so it
+    can warn about the one-time download before starting."""
+    if model_size not in ALLOWED_WHISPER_SIZES:
+        raise HTTPException(status_code=400, detail="invalid model_size")
+    from transcriber import get_model_dir, is_model_downloaded  # lazy — heavy deps
+    return {
+        "model_size": model_size,
+        "model_downloaded": is_model_downloaded(model_size),
+        "model_dir": str(get_model_dir()),
+    }
+
+
+@api.get("/srt-progress/{file_id}")
+def srt_progress(file_id: str):
+    """Polled by the frontend during subtitle generation."""
+    _validate_file_id(file_id)
+    state = _get_srt_progress(file_id)
+    if state is None:
+        return {"active": False}
+    return {"active": True, **state}
+
+
+@api.post("/export-srt")
+def export_srt(req: SrtRequest):
+    """Transcribe speech with Whisper and return an SRT timed to the CUT
+    timeline (silent regions removed), ready for Premiere Pro import."""
+    if req.model_size not in ALLOWED_WHISPER_SIZES:
+        raise HTTPException(status_code=400, detail="invalid model_size")
+    video = _find_video(req.file_id)
+    mic = _find_mic(req.file_id) if req.use_mic else None
+
+    # Clean speech beats game-audio mix for transcription accuracy, so prefer
+    # the mic track when it exists. Its clock runs mic_offset seconds behind
+    # the video's — remap_segments shifts it back.
+    source = mic if mic is not None else video
+    time_shift = req.mic_offset if mic is not None else 0.0
+
+    # Lazy import: pulling in faster-whisper/ctranslate2 at module load would
+    # slow app startup by seconds for users who never touch subtitles.
+    from transcriber import remap_segments, to_srt, transcribe
+
+    def _on_progress(data: dict) -> None:
+        _set_srt_progress(req.file_id, data)
+
+    _set_srt_progress(req.file_id, {"percent": 0.0, "phase": "starting"})
+    with _claim_srt(req.file_id):
+        try:
+            segments = transcribe(
+                str(source),
+                model_size=req.model_size,
+                language="tr",
+                progress_cb=_on_progress,
+            )
+            remapped = remap_segments(
+                segments,
+                [r.model_dump() for r in req.regions],
+                req.duration,
+                time_shift=time_shift,
+            )
+            srt_text = to_srt(remapped)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500, detail=f"Altyazı üretimi başarısız: {exc}"
+            ) from exc
+        finally:
+            _set_srt_progress(req.file_id, None)
+
+    stem = video.name.split(VIDEO_TAG, 1)[-1]
+    download_name = f"{Path(stem).stem}_silencecut.srt"
+    return Response(
+        content=srt_text.encode("utf-8"),
+        media_type="application/x-subrip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{download_name}"',
+            "X-Segment-Count": str(len(remapped)),
         },
     )
 

@@ -58,6 +58,13 @@ if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
 pyinstaller silencecut.spec --noconfirm || goto :fail
 
+rem Whisper modeli daha once indirildiyse exe'nin yanina kopyala ki
+rem kullanici ilk altyazi uretiminde tekrar 460 MB indirmek zorunda kalmasin.
+if exist models (
+  echo Whisper modeli dist\models icine kopyalaniyor...
+  xcopy /e /i /q models dist\models >nul
+)
+
 echo.
 echo === Tamamlandi ===
 echo Cikti: dist\SilenceCut.exe

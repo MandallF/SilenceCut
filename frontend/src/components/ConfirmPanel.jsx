@@ -15,12 +15,16 @@ export default function ConfirmPanel({
   onEdit,
   onExport,
   onExportPremiere,
+  onExportSrt,
   onReset,
   exporting,
   exportProgress,
   exportEta,
   exportSpeed,
   exportPhase,
+  srtGenerating,
+  srtProgress,
+  srtPhase,
   quality,
   setQuality,
   hwEncoderLabel,  // e.g. "GPU (AMD AMF)" or null
@@ -142,7 +146,7 @@ export default function ConfirmPanel({
         </div>
         <button
           className="btn btn-success"
-          disabled={exporting || regions.length === 0}
+          disabled={exporting || srtGenerating || regions.length === 0}
           onClick={onExport}
         >
           {exporting
@@ -171,7 +175,7 @@ export default function ConfirmPanel({
         {onExportPremiere && (
           <button
             onClick={onExportPremiere}
-            disabled={exporting || regions.length === 0}
+            disabled={exporting || srtGenerating || regions.length === 0}
             title="Premiere Pro'da açabileceğiniz bir XML proje dosyası üretir. Encode etmez — Premiere'de export edersiniz."
             style={{
               background: 'transparent',
@@ -181,14 +185,51 @@ export default function ConfirmPanel({
               padding: '8px 12px',
               fontSize: 12,
               fontWeight: 500,
-              cursor: exporting || regions.length === 0 ? 'not-allowed' : 'pointer',
-              opacity: exporting || regions.length === 0 ? 0.5 : 1,
+              cursor: exporting || srtGenerating || regions.length === 0 ? 'not-allowed' : 'pointer',
+              opacity: exporting || srtGenerating || regions.length === 0 ? 0.5 : 1,
             }}
           >
             🎬 Premiere Projesi Olarak Kaydet (.xml)
           </button>
         )}
-        <button className="btn btn-secondary" onClick={onReset} disabled={exporting}>
+        {onExportSrt && (
+          <>
+            <button
+              onClick={onExportSrt}
+              disabled={exporting || srtGenerating || regions.length === 0}
+              title="Whisper ile konuşmayı Türkçe altyazıya çevirir. Zamanlar kesilmiş timeline'a göre hesaplanır; Premiere'a import edip stillendirebilirsiniz."
+              style={{
+                background: 'transparent',
+                color: '#fbbf24',
+                border: '1px solid #92650a',
+                borderRadius: 4,
+                padding: '8px 12px',
+                fontSize: 12,
+                fontWeight: 500,
+                cursor: exporting || srtGenerating || regions.length === 0 ? 'not-allowed' : 'pointer',
+                opacity: exporting || srtGenerating || regions.length === 0 ? 0.5 : 1,
+              }}
+            >
+              {srtGenerating
+                ? (srtPhase === 'downloading'
+                    ? 'Model indiriliyor… (tek seferlik)'
+                    : srtPhase === 'loading'
+                      ? 'Model yükleniyor…'
+                      : srtPhase === 'decoding'
+                        ? 'Ses çözülüyor…'
+                        : srtPhase === 'transcribing'
+                          ? `Transkript ediliyor… %${srtProgress.toFixed(0)}`
+                          : 'Başlatılıyor…')
+                : '📝 Türkçe Altyazı Oluştur (.srt)'}
+            </button>
+            {srtGenerating && (
+              <div className="progress">
+                <div style={{ width: `${Math.max(2, srtProgress)}%` }} />
+              </div>
+            )}
+          </>
+        )}
+        <button className="btn btn-secondary" onClick={onReset} disabled={exporting || srtGenerating}>
           ↩ Orijinale Sıfırla
         </button>
       </div>

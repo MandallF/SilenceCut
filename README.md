@@ -69,6 +69,19 @@ Upload sonrası backend her kanalın RMS dağılımına bakıp:
 
 Çözünürlük, FPS ve ses örnekleme korunur; yalnızca sıkıştırma değişir.
 
+### Otomatik Türkçe Altyazı (.srt)
+
+Sessizlikleri tespit ettikten sonra **"📝 Türkçe Altyazı Oluştur"** butonu, konuşmayı [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (Whisper `small`, int8, CPU) ile transkript eder ve bir `.srt` dosyası üretir:
+
+- Zaman damgaları **kesilmiş timeline'a göre** yeniden hesaplanır — altyazılar export edilen videoyla/Premiere sequence'iyle senkron olur
+- Mikrofon kaydı yüklüyse transkript ondan yapılır (temiz konuşma); yoksa video sesinden
+- Kesilen sessizliğe taşan cümleler otomatik kırpılır; kesintiye yayılan cümleler bölünür
+- `vad_filter` sayesinde uzun sessiz/müzikli bölümlerde halüsinasyon metin üretilmez
+
+**İlk kullanımda** ~460 MB'lık Whisper modeli internetten indirilir ve `.exe`'nin yanındaki `models/` klasörüne kaydedilir — sonraki kullanımlar tamamen offline'dır.
+
+**Premiere'da kullanım:** `File → Import` ile `.srt`'yi açın → timeline'a sürükleyin → caption track oluşur → stilini (font, renk, konum, arka plan) **Essential Graphics** panelinden topluca düzenleyin.
+
 ### Streaming yükleme
 
 Yüklemeler `multipart/form-data` yerine raw body olarak gönderilir → multipart parsing'in spool-then-copy çift I/O maliyeti olmadan doğrudan diske yazılır. Çok-GB videolarda kayda değer fark yaratır.
@@ -163,6 +176,12 @@ npm run dev
 | `POST /api/suggest-threshold` | Otomatik eşik önerisi |
 | `POST /api/analyze` | Sessizlik tespiti, waveform üretimi |
 | `POST /api/export` | FFmpeg ile kes + birleştir, dosyayı stream et |
+| `GET /api/export-progress/{file_id}` | Canlı encode ilerlemesi (yüzde, ETA, hız) |
+| `POST /api/export-premiere-xml` | FCP7 XML üret (Premiere'a import için) |
+| `POST /api/export-srt` | Whisper ile Türkçe altyazı üret (kesilmiş timeline'a göre) |
+| `GET /api/srt-progress/{file_id}` | Canlı transkripsiyon ilerlemesi |
+| `GET /api/srt-status` | Whisper modeli indirilmiş mi |
+| `GET /api/encoders` | Donanım encoder tespiti (NVENC/QSV/AMF) |
 | `DELETE /api/cleanup/{file_id}` | Geçici dosyaları sil |
 
 - `analyzer.py`: FFmpeg ile 22050 Hz mono PCM, 50 ms RMS pencereleri, otomatik eşik önerisi

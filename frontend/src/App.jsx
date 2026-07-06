@@ -50,6 +50,10 @@ export default function App() {
   const [exportPhase, setExportPhase] = useState('idle'); // 'idle'|'starting'|'encoding'|'finalizing'|'streaming'
   const [quality, setQuality] = useState('balanced');
 
+  const [srtGenerating, setSrtGenerating] = useState(false);
+  const [srtProgress, setSrtProgress] = useState(0);
+  const [srtPhase, setSrtPhase] = useState('idle'); // 'idle'|'starting'|'downloading'|'loading'|'decoding'|'transcribing'
+
   const [toasts, setToasts] = useState([]);
   const [helpOpen, setHelpOpen] = useState(false);
   const [backendDown, setBackendDown] = useState(false);
@@ -447,6 +451,119 @@ export default function App() {
     }
   }, [file, analysis, editable, mic, micOffset, pushToast]);
 
+  /* ----- Turkish subtitle (SRT) generation ----- */
+  const handleExportSrt = useCallback(async () => {
+    if (!file || !analysis) return;
+    if (editable.length === 0) {
+      pushToast('Kesilecek bölge yok — önce sessizlikleri tespit edin', 'warning');
+      return;
+    }
+
+    // One-time model download warning. srt-status is cheap; if it fails we
+    // just skip the warning and let the backend handle it.
+    try {
+      const st = await fetch('/api/srt-status?model_size=small');
+      if (st.ok) {
+        const info = await st.json();
+        if (!info.model_downloaded) {
+          const ok = window.confirm(
+            'İlk altyazı üretiminde Whisper konuşma tanıma modeli indirilecek ' +
+            '(~460 MB, tek seferlik — internet bağlantısı gerekir).\n\n' +
+            `Model şuraya kaydedilecek:\n${info.model_dir}\n\n` +
+            'Devam edilsin mi?'
+          );
+          if (!ok) return;
+        }
+      }
+    } catch { /* offline check is best-effort */ }
+
+    const stem = file.filename.replace(/\.[^.]+$/, '');
+    const suggestedName = `${stem}_silencecut.srt`;
+
+    let fileHandle = null;
+    if (typeof window.showSaveFilePicker === 'function') {
+      try {
+        fileHandle = await window.showSaveFilePicker({
+          suggestedName,
+          types: [{ description: 'SRT altyazı', accept: { 'application/x-subrip': ['.srt'] } }],
+        });
+      } catch (err) {
+        if (err && err.name === 'AbortError') return;
+        fileHandle = null;
+      }
+    }
+
+    setSrtGenerating(true);
+    setSrtProgress(0);
+    setSrtPhase('starting');
+
+    const fileId = file.file_id;
+    const progressTimer = setInterval(async () => {
+      try {
+        const r = await fetch(`/api/srt-progress/${fileId}`);
+        if (!r.ok) return;
+        const p = await r.json();
+        if (p.active) {
+          if (typeof p.percent === 'number') setSrtProgress(p.percent);
+          if (p.phase) setSrtPhase(p.phase);
+        }
+      } catch { /* keep last value on network blip */ }
+    }, 1200);
+
+    try {
+      const resp = await fetch('/api/export-srt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          file_id: fileId,
+          regions: editable,
+          duration: analysis.duration,
+          mic_offset: mic ? micOffset : 0.0,
+          use_mic: !!mic,
+          model_size: 'small',
+        }),
+      });
+      if (!resp.ok) {
+        let detail = 'Altyazı üretimi başarısız';
+        try { const e = await resp.json(); if (e.detail) detail = e.detail; } catch { /* ignore */ }
+        pushToast(detail, 'danger', 10000);
+        return;
+      }
+      const segmentCount = resp.headers.get('X-Segment-Count');
+      const blob = await resp.blob();
+      if (fileHandle) {
+        const writable = await fileHandle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        pushToast(`Altyazı kaydedildi: ${fileHandle.name || suggestedName}`, 'success', 5000);
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = suggestedName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        pushToast('İndirilenler klasörüne kaydedildi', 'success', 4000);
+      }
+      pushToast(
+        `📝 ${segmentCount || '?'} altyazı satırı üretildi. Premiere'da File → Import ile açın; ` +
+        'stilini Essential Graphics panelinden topluca düzenleyebilirsiniz.',
+        'info', 9000,
+      );
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(err);
+      pushToast('Altyazı indirilemedi', 'danger');
+    } finally {
+      clearInterval(progressTimer);
+      setSrtGenerating(false);
+      setSrtProgress(0);
+      setSrtPhase('idle');
+    }
+  }, [file, analysis, editable, mic, micOffset, pushToast]);
+
   const handleReset = useCallback(() => {
     if (analysis) {
       history.reset(analysis.silent_regions);
@@ -815,12 +932,16 @@ export default function App() {
               onEdit={handleEdit}
               onExport={handleExport}
               onExportPremiere={handleExportPremiere}
+              onExportSrt={handleExportSrt}
               onReset={handleReset}
               exporting={exporting}
               exportProgress={exportProgress}
               exportEta={exportEta}
               exportSpeed={exportSpeed}
               exportPhase={exportPhase}
+              srtGenerating={srtGenerating}
+              srtProgress={srtProgress}
+              srtPhase={srtPhase}
               quality={quality}
               setQuality={setQuality}
               hwEncoderLabel={hwEncoderLabel}

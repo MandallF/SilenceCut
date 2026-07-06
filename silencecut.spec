@@ -18,13 +18,18 @@ if FRONTEND_DIST.is_dir():
     datas.append((str(FRONTEND_DIST), "frontend_dist"))
 
 # Backend Python modules — keep them next to the entry script.
-for fname in ("main.py", "analyzer.py", "exporter.py", "ffmpeg_path.py", "premiere_xml.py"):
+for fname in ("main.py", "analyzer.py", "exporter.py", "ffmpeg_path.py", "premiere_xml.py", "transcriber.py"):
     p = BACKEND / fname
     if p.exists():
         datas.append((str(p), "backend"))
 
 # imageio-ffmpeg ships its static binary as a package data file.
 datas += collect_data_files("imageio_ffmpeg")
+
+# faster-whisper: ctranslate2 carries native DLLs as package data, and the
+# VAD model ships as an onnx asset inside faster_whisper itself.
+datas += collect_data_files("ctranslate2")
+datas += collect_data_files("faster_whisper")
 
 hiddenimports = []
 hiddenimports += collect_submodules("uvicorn")
@@ -33,6 +38,7 @@ hiddenimports += collect_submodules("starlette")
 hiddenimports += collect_submodules("anyio")
 hiddenimports += collect_submodules("h11")
 hiddenimports += collect_submodules("pydantic")
+hiddenimports += collect_submodules("faster_whisper")
 hiddenimports += [
     "uvicorn.lifespan.on",
     "uvicorn.lifespan.off",
@@ -42,6 +48,11 @@ hiddenimports += [
     "uvicorn.loops.auto",
     "imageio_ffmpeg",
     "psutil",
+    "ctranslate2",
+    "huggingface_hub",
+    "tokenizers",
+    "onnxruntime",
+    "av",
 ]
 
 
